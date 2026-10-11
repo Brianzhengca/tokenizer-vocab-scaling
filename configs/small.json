@@ -1,0 +1,31 @@
+{
+  "seq_length": 4096,
+  "model": {
+    "d_model": 512,
+    "n_layers": 12,
+    "n_heads": 8,
+    "hidden_size_multiplier": 1.5,
+    "block_name": "default",
+    "qk_norm": false,
+    "rope_theta": 500000,
+    "layer_norm_eps": 1e-06,
+    "tie_word_embeddings": true
+  },
+  "training": {
+    "epochs": 1,
+    "micro_batch_size": 32,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.1,
+    "warmup_fraction": 0.03,
+    "decay_fraction": 0.1,
+    "decay_min_lr": 0.0,
+    "compile": true,
+    "logging_steps": 10,
+    "eval_steps": 10000,
+    "save_steps": 10000,
+    "num_workers": 2,
+    "report_to": "none",
+    "seed": 42,
+    "gradient_accumulation_steps": 2
+  }
+}

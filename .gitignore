@@ -1,0 +1,10 @@
+EMO/
+tokenized/
+runs/
+__pycache__/
+*.bin
+.cache/
+model_checkpoints/
+*.log
+*.part
+data/*.jsonl

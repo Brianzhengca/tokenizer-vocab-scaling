@@ -1,0 +1,115 @@
+diff --git a/src/olmo_core/nn/transformer/config.py b/src/olmo_core/nn/transformer/config.py
+index a1f868a..3914bac 100644
+--- a/src/olmo_core/nn/transformer/config.py
++++ b/src/olmo_core/nn/transformer/config.py
+@@ -332,6 +332,7 @@ class TransformerConfig(ModelConfig):
+     block_pattern: Optional[List[str]] = None
+     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+     embed_scale: Optional[float] = None
++    tie_word_embeddings: bool = False
+ 
+     def __post_init__(self):
+         validate_block_resolution_config(
+@@ -384,6 +385,7 @@ class TransformerConfig(ModelConfig):
+                 block_overrides=self.block_overrides,
+                 block_pattern=self.block_pattern,
+                 embed_scale=self.embed_scale,
++                tie_word_embeddings=self.tie_word_embeddings,
+             )
+         elif self.name == TransformerType.normalized:
+             assert self.embedding_norm is None
+@@ -498,6 +500,8 @@ class TransformerConfig(ModelConfig):
+         # LM head.
+         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
+ 
++        if self.tie_word_embeddings:
++            num_params -= self.d_model * self.vocab_size
+         return num_params
+ 
+     @property
+@@ -518,6 +522,8 @@ class TransformerConfig(ModelConfig):
+ 
+         # LM head.
+         num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
++        if self.tie_word_embeddings:
++            num_active_params -= self.d_model * self.vocab_size
+ 
+         return num_active_params
+ 
+diff --git a/src/olmo_core/nn/transformer/model.py b/src/olmo_core/nn/transformer/model.py
+index 5730c94..4347469 100644
+--- a/src/olmo_core/nn/transformer/model.py
++++ b/src/olmo_core/nn/transformer/model.py
+@@ -123,6 +123,7 @@ class Transformer(nn.Module):
+         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+         block_pattern: Optional[List[str]] = None,
+         embed_scale: Optional[float] = None,
++        tie_word_embeddings: bool = False,
+     ):
+         super().__init__()
+ 
+@@ -166,6 +167,10 @@ class Transformer(nn.Module):
+             d_model=d_model, vocab_size=vocab_size, init_device=init_device
+         )
+ 
++        self.tie_word_embeddings = tie_word_embeddings
++        if tie_word_embeddings:
++            self.lm_head.w_out.weight = self.embeddings.weight
++
+         self.init_device = init_device
+         self.init_method = InitMethod(init_method)
+         self.init_seed = init_seed
+@@ -273,6 +278,9 @@ class Transformer(nn.Module):
+         """
+         device = device or self.device
+         self.to_empty(device=device)
++        # Materializing meta tensors can break shared Parameter identity.
++        if self.tie_word_embeddings:
++            self.lm_head.w_out.weight = self.embeddings.weight
+ 
+         for module in self.modules():
+             if hasattr(module, "reset_parameters"):
+@@ -345,7 +353,7 @@ class Transformer(nn.Module):
+                 if max_seq_len is not None and att.rope is not None:
+                     att.rope.warmup_cache(max_seq_len, device)
+ 
+-        if self.lm_head is not None:
++        if self.lm_head is not None and not self.tie_word_embeddings:
+             self.init_method.init_final_w_out(
+                 self.lm_head.w_out,
+                 d_model=self.d_model,
+diff --git a/src/olmo_core/train/callbacks/wandb.py b/src/olmo_core/train/callbacks/wandb.py
+index 86e3dc4..3d50e8b 100644
+--- a/src/olmo_core/train/callbacks/wandb.py
++++ b/src/olmo_core/train/callbacks/wandb.py
+@@ -114,7 +114,7 @@ class WandBCallback(Callback):
+                 log.warning("Finalizing failed W&B run...")
+             else:
+                 log.info("Finalizing successful W&B run...")
+-            self.wandb.finish(exit_code=exit_code, quiet=True)
++            self.wandb.finish(exit_code=exit_code)
+             self._finalized = True
+ 
+     def pre_train(self):
+diff --git a/src/olmo_core/train/train_module/transformer/train_module.py b/src/olmo_core/train/train_module/transformer/train_module.py
+index ed245d4..36e464f 100644
+--- a/src/olmo_core/train/train_module/transformer/train_module.py
++++ b/src/olmo_core/train/train_module/transformer/train_module.py
+@@ -14,6 +14,7 @@ from torch.distributed.fsdp import FSDPModule
+ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+ from torch.distributed.tensor import DTensor
+ from torch.nn.parallel import DistributedDataParallel as DDP
++from torch.distributed._composable.replicate import DDP as ComposableDDP
+ from torch.optim import Optimizer
+ 
+ from olmo_core.data.utils import get_labels, split_batch
+@@ -576,6 +577,9 @@ class TransformerTrainModule(TrainModule):
+                 # For HSDP we can delay the gradients all-reduce until the final micro-batch.
+                 if self.dp_config.name == DataParallelType.hsdp:
+                     self.model.set_requires_all_reduce(is_last_mb)
++            elif isinstance(self.model, ComposableDDP):
++                self.model.set_requires_gradient_sync(is_last_mb)
++                stack.callback(self.model.set_requires_gradient_sync, True)
+             elif isinstance(self.model, DDP):
+                 # For DDP, only sync gradients on the final micro-batch.
+                 if not is_last_mb:

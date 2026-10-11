@@ -1,0 +1,11 @@
+{
+  "dataset": "allenai/dolma3_mix-6T",
+  "revision": "689a3ea2d8217e64d73a5058913fa43ad15e81aa",
+  "seed": 42,
+  "method": "Simple random sample without replacement of up to 3 complete shards per source/topic. Estimated topic text bytes = total compressed bytes * sampled text bytes / sampled compressed bytes (ratio estimator).",
+  "text_definition": "UTF-8 bytes of the text field only; excludes metadata and JSON serialization overhead.",
+  "limitations": "Small pilot sample; ratio estimates may be biased and variable. Sample min/max ratios are diagnostics, not confidence intervals. No token counts inferred.",
+  "sampled_shards": 185,
+  "sampled_compressed_bytes": 16237002356,
+  "estimated_total_text_bytes": 26739048096487.688
+}
